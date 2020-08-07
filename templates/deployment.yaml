@@ -27,26 +27,155 @@ spec:
       serviceAccountName: {{ include "tinytinyrss.serviceAccountName" . }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      hostAliases:
+        - ip: "127.0.0.1"
+          hostnames:
+            - "app"
       containers:
-        - name: {{ .Chart.Name }}
+        - name: {{ .Chart.Name }}-app
           securityContext:
             {{- toYaml .Values.securityContext | nindent 12 }}
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: DB_TYPE
+              value: "pgsql"
+            - name: DB_HOST
+              value: "{{ .Release.Name }}-postgresql"
+            {{ with .Values.postgresql}}
+            - name: DB_NAME
+              value: {{ .postgresqlDatabase | quote }}
+            - name: DB_USER
+              value: "postgres"
+            {{ end }}
+            - name: DB_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "tinytinyrss.fullname" . }}
+                  key: "database_password"
+            - name: OWNER_UID
+              value: "1000"
+            - name: OWNER_GID
+              value: "1000"
+            - name: SELF_URL_PATH
+              value: {{ .Values.self_url_path }}
+          ports:
+            - name: app
+              containerPort: 9000
+              protocol: TCP
+          livenessProbe:
+            tcpSocket:
+              port: app
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            exec:
+              command:
+                - cat
+                - /var/www/html/tt-rss/.app_is_ready
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: {{ .Chart.Name }}-data
+              mountPath: /var/www/html
+        - name: {{ .Chart.Name }}-updater
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: DB_TYPE
+              value: "pgsql"
+            - name: DB_HOST
+              value: "{{ .Release.Name }}-postgresql"
+            {{ with .Values.postgresql}}
+            - name: DB_NAME
+              value: {{ .postgresqlDatabase | quote }}
+            - name: DB_USER
+              value: "postgres"
+            {{ end }}
+            - name: DB_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "tinytinyrss.fullname" . }}
+                  key: "database_password"
+            - name: OWNER_UID
+              value: "1000"
+            - name: OWNER_GID
+              value: "1000"
+            - name: SELF_URL_PATH
+              value: {{ .Values.self_url_path }}
+          command: ["/updater.sh"]
+          ports:
+            - name: app
+              containerPort: 9000
+              protocol: TCP
+          readinessProbe:
+            exec:
+              command:
+                - cat
+                - /var/www/html/tt-rss/.app_is_ready
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: {{ .Chart.Name }}-data
+              mountPath: /var/www/html
+        - name: {{ .Chart.Name }}-web
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "cthulhoo/ttrss-web:latest"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: DB_TYPE
+              value: "pgsql"
+            - name: DB_HOST
+              value: "{{ .Release.Name }}-postgresql"
+            {{ with .Values.postgresql }}
+            - name: DB_NAME
+              value: {{ .postgresqlDatabase | quote }}
+            - name: DB_USER
+              value: "postgres"
+            {{ end }}
+            - name: DB_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "tinytinyrss.fullname" . }}
+                  key: "database_password"
+            - name: OWNER_UID
+              value: "1000"
+            - name: OWNER_GID
+              value: "1000"
+            - name: SELF_URL_PATH
+              value: {{ .Values.self_url_path }}
           ports:
             - name: http
-              containerPort: 80
+              containerPort: 2015
               protocol: TCP
           livenessProbe:
             httpGet:
               path: /
               port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
           readinessProbe:
             httpGet:
               path: /
               port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: {{ .Chart.Name }}-data
+              mountPath: /var/www/html
+      volumes:
+        - name: {{ .Chart.Name }}-data
+          persistentVolumeClaim:
+            claimName: {{ default (include "tinytinyrss.fullname" .) .Values.persistence.existingClaim }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
